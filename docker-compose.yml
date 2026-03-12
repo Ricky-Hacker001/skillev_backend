@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+      POSTGRES_DB: skillev
+    ports:
+      - "5433:5432"  # <--- CHANGE THIS (External:Internal)
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # You can remove the pgadmin service since you have it on Windows
+volumes:
+  postgres_data:
