@@ -5,7 +5,11 @@ from sqlalchemy.orm import Session
 from jose import jwt, JWTError
 # main.py - Top of the file
 from datetime import datetime  # <--- Add this line
+# main.py
+from dependencies import get_current_user # <--- Change this import
+# ... other imports
 
+# DELETE the get_current_user function body from main.py
 # Internal Imports
 import models 
 import users.utils as utils
@@ -32,24 +36,24 @@ app.add_middleware(
 )
 
 # --- 2. AUTHENTICATION DEPENDENCY ---
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
+# def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+#     credentials_exception = HTTPException(
+#         status_code=status.HTTP_401_UNAUTHORIZED,
+#         detail="Could not validate credentials",
+#         headers={"WWW-Authenticate": "Bearer"},
+#     )
+#     try:
+#         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+#         email: str = payload.get("sub")
+#         if email is None:
+#             raise credentials_exception
+#     except JWTError:
+#         raise credentials_exception
         
-    user = db.query(models.User).filter(models.User.email == email).first()
-    if user is None:
-        raise credentials_exception
-    return user
+#     user = db.query(models.User).filter(models.User.email == email).first()
+#     if user is None:
+#         raise credentials_exception
+#     return user
 
 # --- 3. ROUTER REGISTRATION ---
 app.include_router(user_router.router)

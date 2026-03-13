@@ -11,3 +11,5 @@ run cmds
  docker build -t skillev-labs-idor:v1 .
 
  docker build --load -t skillev-labs-idor:v1 .
+
+ sudo -u postgres psql -d skillev

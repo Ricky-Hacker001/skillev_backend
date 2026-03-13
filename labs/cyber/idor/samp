@@ -1,0 +1,133 @@
+from flask import Flask, request, render_template_string, make_response, jsonify
+import time
+
+app = Flask(__name__)
+
+# Mock Database of sensitive information
+DOCUMENTS = {
+    "1001": {"owner": "guest", "content": "Welcome to Skillev! This is your public welcome note.", "status": "Public"},
+    "1002": {"owner": "admin", "content": "ADMIN_FLAG{IDOR_MASTER_5521}", "status": "Restricted"},
+    "1003": {"owner": "hr_manager", "content": "Candidate shortlist: Ricky, Charles, Prabhavathi.", "status": "Private"}
+}
+
+@app.after_request
+def add_security_headers(response):
+    response.headers['X-Frame-Options'] = 'ALLOWALL'
+    response.headers['Content-Security-Policy'] = "frame-ancestors *"
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
+
+HTML_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Skillev Lab - IDOR</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #030303; color: #FFFFFF; margin: 0; display: flex; height: 100vh; overflow: hidden; }
+        .sidebar { width: 400px; background: #080808; border-right: 2px solid #f59e0b; padding: 40px 30px; overflow-y: auto; box-sizing: border-box; }
+        .section-title { color: #f59e0b; font-size: 1.1rem; font-weight: 900; text-transform: uppercase; letter-spacing: 3px; margin-bottom: 30px; }
+        .logic-step { background: #0c0c0c; border: 1px solid #222; border-left: 4px solid #f59e0b; padding: 20px; border-radius: 8px; margin-bottom: 25px; }
+        .logic-step b { color: #f59e0b; display: block; margin-bottom: 10px; text-transform: uppercase; }
+        .main-content { flex-grow: 1; display: flex; align-items: center; justify-content: center; padding: 40px; }
+        .container { width: 100%; max-width: 500px; background: #080808; padding: 45px; border-radius: 20px; border: 1px solid #222; }
+        .doc-box { background: #000; padding: 20px; border-radius: 12px; border: 1px solid #333; font-family: monospace; min-height: 100px; }
+        .nav-links { margin-top: 20px; display: flex; flex-direction: column; gap: 10px; }
+        .nav-links input { background: #111; border: 1px solid #333; color: #fff; padding: 10px; border-radius: 5px; outline: none; }
+        .nav-links input:focus { border-color: #f59e0b; }
+        .btn { background: #f59e0b; color: #000; border: none; padding: 10px; border-radius: 5px; cursor: pointer; font-weight: bold; text-decoration: none; text-align: center; }
+    </style>
+</head>
+<body>
+    {% if mode == 'learning' %}
+    <div class="sidebar">
+        <div class="section-title">Forensic_Analysis</div>
+        <div class="logic-step">
+            <b>01. Parameter Manipulation</b>
+            <p>The system fetches documents using the <code>doc_id</code>. It doesn't check if "guest" has permission to see "admin" files.</p>
+        </div>
+        <div class="logic-step">
+            <b>02. Discovery</b>
+            <p>Directly modify the URL or use the input box below to "guess" other document IDs.</p>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="main-content">
+        <div class="container">
+            <h2 style="color: #f59e0b;">Document_Vault_v1.0</h2>
+            <p style="color: #666;">Authenticated as: <b style="color: #fff;">guest</b></p>
+            
+            <div class="doc-box">
+                {% if doc %}
+                    <p style="color: #f59e0b;">STATUS: {{ doc.status }} | ID: {{ doc_id }}</p>
+                    <p>{{ doc.content }}</p>
+                {% else %}
+                    <p style="color: #ef4444;">⚠️ 404: OBJECT_NOT_FOUND</p>
+                    <p style="font-size: 0.8rem; color: #555;">The requested reference does not exist in the vault index.</p>
+                {% endif %}
+            </div>
+
+            <div class="nav-links">
+                <label style="font-size: 0.8rem; color: #888;">Direct Reference Access:</label>
+                <form action="/" method="GET" style="display: flex; gap: 10px;">
+                    <input type="hidden" name="mode" value="{{mode}}">
+                    <input type="text" name="doc_id" id="doc_id_input" placeholder="Enter Doc ID (e.g. 1001)" autocomplete="off">
+                    <button type="submit" class="btn">Fetch_Object</button>
+                </form>
+                <a href="/?doc_id=1001&mode={{mode}}" style="color: #888; font-size: 0.7rem; text-decoration: underline;">Reset to Default View</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- ANTI-CHEAT TELEMETRY ---
+        document.getElementById('doc_id_input').addEventListener('paste', (e) => {
+            const pastedData = (e.clipboardData || window.clipboardData).getData('text');
+            fetch('/telemetry', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    event: "PASTE_DETECTED",
+                    field: "doc_id_input",
+                    content: pastedData
+                })
+            });
+        });
+    </script>
+</body>
+</html>
+'''
+
+@app.route('/telemetry', methods=['POST'])
+def telemetry():
+    data = request.json
+    # Capture paste for the container manager to deduct 0.25 points
+    print(f"EVIDENCE_LOG: [INTEGRITY_VIOLATION] {data['event']} in {data['field']}: '{data['content']}'", flush=True)
+    return jsonify({"status": "captured"}), 200
+
+@app.route('/')
+def index():
+    mode = request.args.get('mode', 'hiring').strip().lower()
+    doc_id = request.args.get('doc_id', '1001')
+    
+    # Log the access attempt
+    print(f"EVIDENCE_LOG: [MODE:{mode.upper()}] Resource Request: ID {doc_id}", flush=True)
+    
+    doc = DOCUMENTS.get(doc_id)
+    
+    if doc:
+        # Check if they found the target admin document
+        if doc_id == "1002":
+            result_msg = "SUCCESS: IDOR_Bypass_Flag_Captured"
+            print(f"EVIDENCE_LOG: {result_msg}", flush=True)
+        # If they found another non-guest document, log it as an unauthorized access
+        elif doc['owner'] != 'guest':
+            print(f"EVIDENCE_LOG: [INTERACTION] Unauthorized viewing of {doc['owner']}'s document: {doc_id}", flush=True)
+    else:
+        # Log 404 errors for the report
+        print(f"EVIDENCE_LOG: [ERROR] 404_NOT_FOUND: User searched for non-existent ID {doc_id}", flush=True)
+
+    return render_template_string(HTML_TEMPLATE, doc=doc, doc_id=doc_id, mode=mode)
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)

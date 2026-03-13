@@ -1,4 +1,5 @@
-from flask import Flask, request, render_template_string, make_response
+from flask import Flask, request, render_template_string, make_response, jsonify
+import time
 
 app = Flask(__name__)
 
@@ -29,9 +30,11 @@ HTML_TEMPLATE = '''
         .logic-step b { color: #f59e0b; display: block; margin-bottom: 10px; text-transform: uppercase; }
         .main-content { flex-grow: 1; display: flex; align-items: center; justify-content: center; padding: 40px; }
         .container { width: 100%; max-width: 500px; background: #080808; padding: 45px; border-radius: 20px; border: 1px solid #222; }
-        .doc-box { background: #000; padding: 20px; border-radius: 12px; border: 1px solid #333; font-family: monospace; }
-        .nav-links { margin-top: 20px; display: flex; gap: 10px; }
-        .nav-links a { color: #f59e0b; text-decoration: none; font-size: 0.8rem; border: 1px solid #f59e0b; padding: 5px 10px; rounded: 4px; }
+        .doc-box { background: #000; padding: 20px; border-radius: 12px; border: 1px solid #333; font-family: monospace; min-height: 100px; }
+        .nav-links { margin-top: 20px; display: flex; flex-direction: column; gap: 10px; }
+        .nav-links input { background: #111; border: 1px solid #333; color: #fff; padding: 10px; border-radius: 5px; outline: none; }
+        .nav-links input:focus { border-color: #f59e0b; }
+        .btn { background: #f59e0b; color: #000; border: none; padding: 10px; border-radius: 5px; cursor: pointer; font-weight: bold; text-decoration: none; text-align: center; }
     </style>
 </head>
 <body>
@@ -40,11 +43,11 @@ HTML_TEMPLATE = '''
         <div class="section-title">Forensic_Analysis</div>
         <div class="logic-step">
             <b>01. Parameter Manipulation</b>
-            <p>The application fetches documents based on the <code>doc_id</code> parameter in the URL. It checks if the ID exists but fails to verify if the <i>current user</i> owns it.</p>
+            <p>The system fetches documents using the <code>doc_id</code>. It doesn't check if "guest" has permission to see "admin" files.</p>
         </div>
         <div class="logic-step">
             <b>02. Discovery</b>
-            <p>Try changing the ID in the navigation links to find hidden or administrative files.</p>
+            <p>Directly modify the URL or use the input box below to "guess" other document IDs.</p>
         </div>
     </div>
     {% endif %}
@@ -56,33 +59,68 @@ HTML_TEMPLATE = '''
             
             <div class="doc-box">
                 {% if doc %}
-                    <p style="color: #f59e0b;">ID: {{ doc_id }}</p>
+                    <p style="color: #f59e0b;">STATUS: {{ doc.status }} | ID: {{ doc_id }}</p>
                     <p>{{ doc.content }}</p>
                 {% else %}
-                    <p style="color: #ef4444;">404: Document Not Found</p>
+                    <p style="color: #ef4444;">⚠️ 404: OBJECT_NOT_FOUND</p>
+                    <p style="font-size: 0.8rem; color: #555;">The requested reference does not exist in the vault index.</p>
                 {% endif %}
             </div>
 
             <div class="nav-links">
-                <a href="/?doc_id=1001&mode={{mode}}">View My Welcome Note</a>
+                <label style="font-size: 0.8rem; color: #888;">Direct Reference Access:</label>
+                <a href="/?doc_id=1001&mode={{mode}}" style="color: #888; font-size: 0.7rem; text-decoration: underline;">Reset to Default View</a>
             </div>
         </div>
     </div>
+
+    <script>
+        // --- ANTI-CHEAT TELEMETRY ---
+        document.getElementById('doc_id_input').addEventListener('paste', (e) => {
+            const pastedData = (e.clipboardData || window.clipboardData).getData('text');
+            fetch('/telemetry', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    event: "PASTE_DETECTED",
+                    field: "doc_id_input",
+                    content: pastedData
+                })
+            });
+        });
+    </script>
 </body>
 </html>
 '''
+
+@app.route('/telemetry', methods=['POST'])
+def telemetry():
+    data = request.json
+    # Capture paste for the container manager to deduct 0.25 points
+    print(f"EVIDENCE_LOG: [INTEGRITY_VIOLATION] {data['event']} in {data['field']}: '{data['content']}'", flush=True)
+    return jsonify({"status": "captured"}), 200
 
 @app.route('/')
 def index():
     mode = request.args.get('mode', 'hiring').strip().lower()
     doc_id = request.args.get('doc_id', '1001')
     
+    # Log the access attempt
+    print(f"EVIDENCE_LOG: [MODE:{mode.upper()}] Resource Request: ID {doc_id}", flush=True)
+    
     doc = DOCUMENTS.get(doc_id)
     
-    # Logic to capture success
-    if doc_id == "1002":
-        result_msg = "SUCCESS: IDOR_Bypass_Flag_Captured"
-        print(f"EVIDENCE_LOG: {result_msg}", flush=True)
+    if doc:
+        # Check if they found the target admin document
+        if doc_id == "1002":
+            result_msg = "SUCCESS: IDOR_Bypass_Flag_Captured"
+            print(f"EVIDENCE_LOG: {result_msg}", flush=True)
+        # If they found another non-guest document, log it as an unauthorized access
+        elif doc['owner'] != 'guest':
+            print(f"EVIDENCE_LOG: [INTERACTION] Unauthorized viewing of {doc['owner']}'s document: {doc_id}", flush=True)
+    else:
+        # Log 404 errors for the report
+        print(f"EVIDENCE_LOG: [ERROR] 404_NOT_FOUND: User searched for non-existent ID {doc_id}", flush=True)
 
     return render_template_string(HTML_TEMPLATE, doc=doc, doc_id=doc_id, mode=mode)
 

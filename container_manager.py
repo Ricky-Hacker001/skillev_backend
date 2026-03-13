@@ -44,7 +44,7 @@ def cleanup_existing_task(user_id, task_id, mode):
 def capture_evidence_engine(container_id, user_id, domain, task_id, mode):
     """
     Streams logs from Docker and commits them to a fresh DB entry.
-    Updated with Error Handling to prevent race-condition crashes.
+    Now specifically detects INTEGRITY_VIOLATIONS (pasting) and SQL_ERRORS.
     """
     db = SessionLocal()
     try:
@@ -52,7 +52,7 @@ def capture_evidence_engine(container_id, user_id, domain, task_id, mode):
         try:
             container = client.containers.get(container_id)
         except docker.errors.NotFound:
-            print(f"ℹ️ Engine: Container {container_id} not found (likely nuked by cleanup).")
+            print(f"ℹ️ Engine: Container {container_id} not found.")
             return
 
         # 2. Create a brand new EvidenceReport entry
@@ -63,14 +63,15 @@ def capture_evidence_engine(container_id, user_id, domain, task_id, mode):
             container_id=container_id,
             mode=mode, 
             logs=[],
-            status="active"
+            status="active",
+            integrity_score=1.0, # Start with perfect score
+            identity_verified=True
         )
         db.add(report)
         db.commit()
         db.refresh(report)
 
         # 3. Stream logs and tag them
-        # Wrap in another try-except to catch container removal during streaming
         try:
             for line in container.logs(stream=True, follow=True, tail=0):
                 log_entry = line.decode('utf-8').strip()
@@ -78,26 +79,50 @@ def capture_evidence_engine(container_id, user_id, domain, task_id, mode):
                 # Tag for aggregate history clarity
                 tagged_message = f"[MODE:{mode.upper()}] {log_entry}"
                 
+                event_type = "stdout"
+                
+                # --- ANTI-CHEAT & ERROR DETECTION ---
+                
+                # Detection: Copy-Paste events sent from app.py telemetry
+                if "INTEGRITY_VIOLATION" in log_entry.upper():
+                    event_type = "security_violation"
+                    report.identity_verified = False
+                    # Deduct from integrity score (capped at 0)
+                    report.integrity_score = max(0.0, report.integrity_score - 0.2)
+                    print(f"🚩 FLAG: Paste detected for User {user_id}. Score: {report.integrity_score}")
+                
+                # Detection: SQL Syntax errors made by the user
+                elif "SQL_ERROR" in log_entry.upper():
+                    event_type = "user_error"
+                    print(f"⚠️ LOG: User {user_id} triggered a SQL syntax error.")
+
+                # Detection: Task Success
+                elif "SUCCESS" in log_entry.upper():
+                    report.status = "completed"
+                    report.completed_at = datetime.now()
+                    event_type = "milestone"
+                    print(f"✅ SEALED: {mode.upper()} evidence for User {user_id}")
+
                 new_event = {
                     "timestamp": datetime.now().isoformat(),
-                    "type": "stdout",
+                    "type": event_type,
                     "message": tagged_message
                 }
 
+                # Save logs incrementally
                 db.refresh(report)
                 current_logs = list(report.logs) if report.logs else []
                 current_logs.append(new_event)
                 report.logs = current_logs
-
-                # Success Detection
-                if "SUCCESS" in log_entry.upper():
-                    report.status = "completed"
-                    report.completed_at = datetime.now()
-                    print(f"✅ SEALED: {mode.upper()} evidence for User {user_id}")
                 
+                # Flag the overall status if cheating is detected
+                if report.identity_verified == False:
+                    report.status = "flagged"
+
                 db.commit()
+                
         except docker.errors.APIError:
-            print(f"ℹ️ Engine: Log stream for {container_id} stopped (container closed).")
+            print(f"ℹ️ Engine: Log stream for {container_id} stopped.")
                 
     except Exception as e:
         print(f"⚠️ Evidence Engine Error: {e}")
@@ -128,13 +153,9 @@ def start_sub_room_container(user_id: int, domain: str, task_id: str, mode: str 
     if not image:
         return None, f"Image not found for task: {task_id}"
 
-    # 1. Clear previous session for THIS mode
     cleanup_existing_task(user_id, task_id, mode)
-
-    # 2. Assign dynamic port
     assigned_port = find_free_port()
 
-    # 3. Launch isolated container
     try:
         container = client.containers.run(
             image=image,
@@ -152,7 +173,7 @@ def start_sub_room_container(user_id: int, domain: str, task_id: str, mode: str 
             }
         )
 
-        # 4. Wait for the service to be healthy
+        # Wait for service health
         is_ready = False
         for _ in range(50): 
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -164,7 +185,6 @@ def start_sub_room_container(user_id: int, domain: str, task_id: str, mode: str 
             time.sleep(0.2) 
 
         if is_ready:
-            # 5. Start background logging thread
             threading.Thread(
                 target=capture_evidence_engine, 
                 args=(container.id, user_id, domain, task_id, mode), 

@@ -1,13 +1,14 @@
-# labs/web_dev/task-manager/app.py
 from flask import Flask, request, render_template_string, jsonify
-import sqlite3 # Using SQLite for the in-lab mock, but the instruction asks for Postgres logic
-import datetime
+import time
 
 app = Flask(__name__)
 
-# --- Grader Logic ---
-# In a 'from-scratch' lab, we monitor the user's terminal/file activity 
-# or provide an interface to test their endpoints.
+@app.after_request
+def add_security_headers(response):
+    response.headers['X-Frame-Options'] = 'ALLOWALL'
+    response.headers['Content-Security-Policy'] = "frame-ancestors *"
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
@@ -15,70 +16,144 @@ HTML_TEMPLATE = '''
 <head>
     <title>Skillev Lab - Task Manager</title>
     <style>
-        body { font-family: 'Inter', sans-serif; background: #030303; color: #eee; margin: 0; display: flex; height: 100vh; }
-        .sidebar { width: 400px; background: #080808; border-right: 2px solid #10b981; padding: 40px; overflow-y: auto; }
-        .main-content { flex-grow: 1; padding: 60px; display: flex; flex-direction: column; align-items: center; }
-        .instruction-card { background: #0c0c0c; border: 1px solid #222; border-left: 4px solid #10b981; padding: 20px; border-radius: 8px; margin-bottom: 20px; width: 100%; max-width: 600px; }
-        .status-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
-        .status-todo { background: rgba(255,255,255,0.05); color: #666; }
-        .status-done { background: rgba(16,185,129,0.1); color: #10b981; }
-        h1 { font-style: italic; color: #fff; }
-        code { background: #000; padding: 2px 6px; color: #10b981; font-family: monospace; }
-        .btn-test { background: #10b981; color: #000; border: none; padding: 12px 24px; border-radius: 8px; font-weight: 900; cursor: pointer; text-transform: uppercase; }
+        body { font-family: 'Inter', sans-serif; background: #030303; color: #eee; margin: 0; display: flex; height: 100vh; overflow: hidden; }
+        
+        /* SIDEBAR */
+        .sidebar { width: 350px; background: #080808; border-right: 1px solid #222; padding: 30px; overflow-y: auto; box-sizing: border-box; }
+        
+        /* CENTER - CODE SPACE */
+        .code-workspace { flex-grow: 1; display: flex; flex-direction: column; background: #000; border-right: 1px solid #222; }
+        .tab-bar { display: flex; background: #111; border-bottom: 1px solid #222; }
+        .tab { padding: 12px 20px; font-size: 11px; font-weight: 800; cursor: pointer; color: #555; text-transform: uppercase; border-right: 1px solid #222; }
+        .tab.active { background: #000; color: #10b981; border-bottom: 2px solid #10b981; }
+        
+        .editor-container { flex-grow: 1; position: relative; }
+        textarea { 
+            width: 100%; height: 100%; background: #000; color: #10b981; border: none; 
+            padding: 20px; font-family: 'JetBrains Mono', 'Consolas', monospace; font-size: 13px; 
+            outline: none; resize: none; line-height: 1.6; box-sizing: border-box;
+        }
+
+        /* RIGHT - DIAGNOSTIC */
+        .diagnostic-panel { width: 380px; padding: 30px; display: flex; flex-direction: column; box-sizing: border-box; background: #050505; }
+        .instruction-card { background: #0c0c0c; border: 1px solid #222; border-left: 4px solid #10b981; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 0.85rem; }
+        
+        .btn-test { background: #10b981; color: #000; border: none; padding: 15px; border-radius: 8px; font-weight: 900; cursor: pointer; text-transform: uppercase; margin-bottom: 15px; }
+        #results { background: #000; padding: 15px; border-radius: 8px; border: 1px solid #333; flex-grow: 1; font-family: monospace; font-size: 11px; color: #aaa; white-space: pre-wrap; overflow-y: auto; }
+        
+        input { width: 100%; padding: 10px; background: #111; border: 1px solid #333; color: #10b981; border-radius: 4px; margin-bottom: 15px; outline: none; box-sizing: border-box; }
+        .label { font-size: 0.65rem; color: #444; font-weight: 900; text-transform: uppercase; margin-bottom: 8px; display: block; }
     </style>
 </head>
 <body>
     <div class="sidebar">
-        <h2 style="color: #10b981; letter-spacing: 2px;">PROJECT_BRIEF</h2>
-        <p style="font-size: 0.9rem; color: #888;">Domain: Web_Development / Task_Manager</p>
-        <hr style="border: 0; border-top: 1px solid #222; margin: 20px 0;">
-        
+        <h2 style="color: #10b981; font-size: 1.2rem;">PROJECT_BRIEF</h2>
         <div class="instruction-card">
-            <span class="status-badge status-done">Step 01</span>
-            <h3>Backend: REST API</h3>
-            <p>Implement CRUD operations for <code>/tasks</code> using FastAPI or Flask. Ensure your DB schema matches the requirement.</p>
+            <b style="color: #10b981;">Phase 01:</b> Build a REST API using the templates provided. Ensure <code>cors</code> is enabled so this dashboard can connect.
         </div>
-
         <div class="instruction-card">
-            <span class="status-badge status-todo">Step 02</span>
-            <h3>Frontend: Task Grid</h3>
-            <p>Connect your React/Vue frontend to the API. Implement 'Add Task' and 'Toggle Status'.</p>
+            <b style="color: #10b981;">Phase 02:</b> Run your server on <b>Port 8001</b> and verify using the Health Check panel.
         </div>
     </div>
 
-    <div class="main-content">
-        <div style="text-align: center; margin-bottom: 40px;">
-            <div style="color: #10b981; font-weight: 900; font-size: 12px; letter-spacing: 4px; margin-bottom: 10px;">SKILLEV_ORCHESTRATOR_v3</div>
-            <h1>Task Management Dashboard</h1>
+    <div class="code-workspace">
+        <div class="tab-bar">
+            <div class="tab active" onclick="switchTab('fastapi')">Python (FastAPI)</div>
+            <div class="tab" onclick="switchTab('node')">Node.js (Express)</div>
         </div>
+        <div class="editor-container">
+            <textarea id="editor" spellcheck="false"></textarea>
+        </div>
+    </div>
 
-        <div class="instruction-card" style="max-width: 800px;">
-            <h3>Verify Environment</h3>
-            <p>Once you have built your API, click the button below. The system will attempt to perform a CRUD cycle on your <code>http://localhost:8000/tasks</code> endpoint to verify the logic.</p>
-            <button class="btn-test" onclick="runDiagnostic()">Run_System_Check</button>
-            <div id="results" style="margin-top: 20px; font-family: monospace; font-size: 12px;"></div>
-        </div>
+    <div class="diagnostic-panel">
+        <span class="label">🛡️ Protocol: {{ mode | upper }}</span>
+        <span class="label">Target API Endpoint</span>
+        <input type="text" id="api_url" value="http://localhost:8001/tasks">
+        
+        <button class="btn-test" onclick="runDiagnostic()">Run_System_Check</button>
+        
+        <span class="label">Audit Log</span>
+        <div id="results">System idle... awaiting connection.</div>
     </div>
 
     <script>
-        function runDiagnostic() {
+        const editors = {
+            fastapi: `from fastapi import FastAPI\\nfrom fastapi.middleware.cors import CORSMiddleware\\nfrom pydantic import BaseModel\\n\\napp = FastAPI()\\n\\napp.add_middleware(\\n    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]\\n)\\n\\ntasks_db = []\\n\\nclass Task(BaseModel):\\n    title: str\\n    status: str\\n\\n@app.post("/tasks")\\nasync def create(task: Task):\\n    tasks_db.append(task.dict())\\n    return {"status": "saved"}\\n\\n@app.get("/tasks")\\nasync def list_tasks():\\n    return tasks_db\\n\\n# Run: uvicorn main:app --port 8001`,
+            node: `const express = require('express');\\nconst cors = require('cors');\\nconst app = express();\\n\\napp.use(express.json());\\napp.use(cors());\\n\\nlet tasks = [];\\n\\napp.post('/tasks', (req, res) => {\\n    tasks.push(req.body);\\n    res.status(201).json({ status: "saved" });\\n});\\n\\napp.get('/tasks', (req, res) => {\\n    res.json(tasks);\\n});\\n\\napp.listen(8001, () => console.log('Server on 8001'));`
+        };
+
+        const editorEl = document.getElementById('editor');
+        editorEl.value = editors.fastapi;
+
+        function switchTab(lang) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            editorEl.value = editors[lang];
+        }
+
+        // --- TELEMETRY ---
+        editorEl.addEventListener('paste', (e) => {
+            fetch('/telemetry', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ event: "PASTE_DETECTED", field: "code_editor", content: "Code block pasted into editor" })
+            });
+        });
+
+        async function runDiagnostic() {
             const results = document.getElementById('results');
-            results.innerHTML = "> Initiating Connection...<br>> Testing POST /tasks...<br>> Checking DB Persistence...";
+            const targetUrl = document.getElementById('api_url').value;
+            results.innerHTML = `> PINGing ${targetUrl}...\\n`;
             
-            // Mocking the check for this UI demo
-            setTimeout(() => {
-                results.innerHTML += "<br>> <span style='color: #10b981;'>[SUCCESS]</span>: Integration Verified. Flag_Generated: SK_TASK_MASTER_2026";
-                console.log("EVIDENCE_LOG: SUCCESS: Task_Manager_Integration_Complete");
-            }, 2000);
+            try {
+                const testTitle = "Audit_" + Math.floor(Math.random() * 9999);
+                
+                // POST Test
+                results.innerHTML += "> Testing POST /tasks...\\n";
+                const postRes = await fetch(targetUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title: testTitle, status: "todo" })
+                });
+                if (!postRes.ok) throw new Error("POST Failed");
+
+                // GET Test
+                results.innerHTML += "> Verifying GET /tasks...\\n";
+                const getRes = await fetch(targetUrl);
+                const data = await getRes.json();
+
+                if (Array.isArray(data) && data.some(t => t.title === testTitle)) {
+                    results.innerHTML += "> <span style='color:#10b981'>[SUCCESS]</span>: Integration Verified.\\n> Flag: SK_TASK_MASTER_2026";
+                    fetch('/report_success', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ flag: "SK_TASK_MASTER_2026" }) });
+                } else {
+                    throw new Error("Persistence Mismatch");
+                }
+            } catch (err) {
+                results.innerHTML += `> <span style='color:#ef4444'>[ERROR]</span>: ${err.message}\\n> Check CORS and Port 8001.`;
+                fetch('/telemetry', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ event: "FAIL", content: err.message }) });
+            }
         }
     </script>
 </body>
 </html>
 '''
 
+@app.route('/telemetry', methods=['POST'])
+def telemetry():
+    data = request.json
+    print(f"EVIDENCE_LOG: [INTEGRITY_VIOLATION] {data['event']} in {data['field']}", flush=True)
+    return jsonify({"status": "captured"}), 200
+
+@app.route('/report_success', methods=['POST'])
+def report_success():
+    data = request.json
+    print(f"EVIDENCE_LOG: SUCCESS: Task_Manager_Complete via {data.get('flag')}", flush=True)
+    return jsonify({"status": "ok"}), 200
+
 @app.route('/')
 def lab_view():
-    mode = request.args.get('mode', 'hiring').lower()
+    mode = request.args.get('mode', 'hiring').strip().lower()
     return render_template_string(HTML_TEMPLATE, mode=mode)
 
 if __name__ == '__main__':
